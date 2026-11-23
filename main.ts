@@ -593,24 +593,22 @@ function v4aEdits(lines: string[], strict: boolean): Edit[] {
     if (line.startsWith('*** Add File: ')) {
       const sec: V4ASection = { kind: 'add', path: line.slice('*** Add File: '.length).trim(), line: i + 1, addLines: [] };
       i++;
+      // Collect the section's raw lines first. Blank lines at the end of a section are
+      // not part of it (section 8), so they are stripped before parsing; a blank line
+      // that is not a `+` line and not empty anywhere else is a parse error, because
+      // the Add File bullet allows only `+` lines and empty lines.
+      const raw: { l: string; idx: number }[] = [];
       while (i < last) {
         const l = lines[i]!;
         if (isV4AStart(l)) break;
-        if (l.startsWith('+')) {
-          sec.addLines!.push(l.slice(1));
-          i++;
-          continue;
-        }
-        if (l === '') {
-          sec.addLines!.push('');
-          i++;
-          continue;
-        }
-        if (blank(l)) {
-          i++;
-          continue;
-        }
-        throw new Exit2(`error: parse ${i + 1}`);
+        raw.push({ l, idx: i });
+        i++;
+      }
+      while (raw.length > 0 && blank(raw[raw.length - 1]!.l)) raw.pop();
+      for (const { l, idx } of raw) {
+        if (l.startsWith('+')) sec.addLines!.push(l.slice(1));
+        else if (l === '') sec.addLines!.push('');
+        else throw new Exit2(`error: parse ${idx + 1}`);
       }
       while (sec.addLines!.length > 0 && sec.addLines![sec.addLines!.length - 1] === '') sec.addLines!.pop();
       sections.push(sec);
@@ -655,7 +653,7 @@ function v4aEdits(lines: string[], strict: boolean): Edit[] {
           i++;
           continue;
         }
-        if (l.trimEnd() === '*** End of File') {
+        if (l === '*** End of File') {
           if (chunk === null) throw new Exit2(`error: parse ${i + 1}`);
           chunk.eof = true;
           finishChunk(false);
@@ -687,8 +685,23 @@ function v4aEdits(lines: string[], strict: boolean): Edit[] {
           continue;
         }
         if (blank(l)) {
-          i++;
-          continue;
+          // A blank line that is not a body line (it starts with a tab, say) is a parse
+          // error, unless it is at the end of the section, where blank lines are not
+          // part of it (section 8).
+          let trailing = true;
+          for (let j = i + 1; j < last; j++) {
+            const m = lines[j]!;
+            if (isV4AStart(m)) break;
+            if (!blank(m)) {
+              trailing = false;
+              break;
+            }
+          }
+          if (trailing) {
+            i++;
+            continue;
+          }
+          throw new Exit2(`error: parse ${i + 1}`);
         }
         throw new Exit2(`error: parse ${i + 1}`);
       }
